@@ -363,10 +363,10 @@ You will now receive notifications when new tasks are available on TryRating.
 }
 
 // ============================================================
-// API: SEND NOTIFICATION
+// API: SEND NOTIFICATION - NO LINK, NO "Open TryRating"
 // ============================================================
 
-async function sendNotification(authCode, title, description, url) {
+async function sendNotification(authCode, title, description) {
     try {
         console.log(`[TryRating Bot] 📨 Sending notification with authCode: ${authCode}`);
         
@@ -389,12 +389,11 @@ async function sendNotification(authCode, title, description, url) {
             return { success: false, error: 'Token not active' };
         }
         
+        // ✅ CLEAN - NO LINK, NO "Open TryRating"
         const message = `
 🎯 *New TryRating Tasks Available!*
 
 ${description || 'New tasks are now available on TryRating.'}
-
-🔗 [Open TryRating](${url || 'https://tryrating.com/app/survey/rate'})
 
 _TryRating Assistant_`;
 
@@ -528,12 +527,12 @@ app.post('/api/verify', async (req, res) => {
     }
 });
 
-// POST /api/notify
+// POST /api/notify - NO URL parameter
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
     
-    const { authCode, title, description, url } = req.body;
+    const { authCode, title, description } = req.body;
     
     if (!authCode) {
         return res.status(400).json({ 
@@ -542,7 +541,7 @@ app.post('/api/notify', async (req, res) => {
         });
     }
     
-    const result = await sendNotification(authCode, title, description, url);
+    const result = await sendNotification(authCode, title, description);
     
     if (result.success) {
         res.json({ success: true });
