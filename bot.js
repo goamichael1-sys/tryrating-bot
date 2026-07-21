@@ -99,7 +99,7 @@ bot.onText(/\/sub/, async (msg) => {
                     `🔑 *Your token is:*
 \`${existing.token}\`
 
-Please enable Telegram Notifications in TryRating Assistant extension and enter this token.
+This token can be used on any Chrome profile.
 
 *Already verified!* ✅`,
                     { parse_mode: 'Markdown' }
@@ -187,7 +187,7 @@ bot.onText(/\/help/, async (msg) => {
 
 *Note:*
 - Each Telegram account gets one unique token
-- Your token is permanent
+- Your token works on any Chrome profile
 - Keep your token secure
 
 *Ready to start? Send /sub!*`;
@@ -230,7 +230,7 @@ You don't have a token yet. Send /sub to generate one.`,
             message += `\n✅ Verified: ${new Date(tokenData.verifiedAt).toLocaleString()}`;
         }
 
-        message += `\n\n${tokenData.isActive ? '✅ Your token is active and ready to use!' : '⏳ Please verify your token in the extension.'}`;
+        message += `\n\n${tokenData.isActive ? '✅ Your token is active and can be used on any Chrome profile!' : '⏳ Please verify your token in the extension.'}`;
 
         bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         
@@ -294,7 +294,7 @@ Enter this code in the TryRating Assistant extension to activate your token.
 }
 
 // ============================================================
-// API: VERIFY CODE
+// API: VERIFY CODE - Allows re-verification across profiles
 // ============================================================
 
 async function verifyCode(token, code) {
@@ -314,10 +314,30 @@ async function verifyCode(token, code) {
             return { success: false, error: 'Invalid token' };
         }
         
+        // ✅ Allow re-verification for already active tokens (cross-profile support)
         if (tokenData.isActive) {
-            return { success: false, error: 'Token already verified' };
+            bot.sendMessage(
+                tokenData.chatId,
+                `✅ *Token is already active!*
+
+🔑 Token: \`${token}\`
+
+This token can be used on any Chrome profile.
+
+*Already verified!* 🎯`,
+                { parse_mode: 'Markdown' }
+            );
+            
+            return { 
+                success: true, 
+                token: token, 
+                user: tokenData, 
+                authCode: token,
+                alreadyVerified: true 
+            };
         }
         
+        // Check pending verification for new tokens
         const pending = pendingVerifications.get(userId);
         if (!pending) {
             return { success: false, error: 'No verification code requested' };
@@ -348,7 +368,7 @@ Your TryRating Assistant token is now active.
 
 🔑 Token: \`${token}\`
 
-You will now receive notifications when new tasks are available on TryRating.
+You can now use this token on any Chrome profile!
 
 *Happy rating! 🎯*`,
             { parse_mode: 'Markdown' }
@@ -363,7 +383,7 @@ You will now receive notifications when new tasks are available on TryRating.
 }
 
 // ============================================================
-// API: SEND NOTIFICATION - NO LINK, NO "Open TryRating"
+// API: SEND NOTIFICATION - NO LINK
 // ============================================================
 
 async function sendNotification(authCode, title, description) {
@@ -389,7 +409,7 @@ async function sendNotification(authCode, title, description) {
             return { success: false, error: 'Token not active' };
         }
         
-        // ✅ CLEAN - NO LINK, NO "Open TryRating"
+        // Clean message - NO LINK
         const message = `
 🎯 *New TryRating Tasks Available!*
 
@@ -513,6 +533,7 @@ app.post('/api/verify', async (req, res) => {
             success: true,
             token: result.token,
             authCode: result.authCode,
+            alreadyVerified: result.alreadyVerified || false,
             user: {
                 userId: result.user.userId,
                 chatId: result.user.chatId,
@@ -527,7 +548,7 @@ app.post('/api/verify', async (req, res) => {
     }
 });
 
-// POST /api/notify - NO URL parameter
+// POST /api/notify
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
