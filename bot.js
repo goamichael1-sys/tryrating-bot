@@ -17,12 +17,14 @@ const BOT_TOKEN = '8854314913:AAFRG1nLNCDbpso8vJg_PnraKzgUn2qoNXk';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'tokens.json');
 
+// Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+    console.log('[TryRating Bot] 📁 Created data directory');
 }
 
 // ============================================================
-// STORAGE - Using userId as key
+// STORAGE
 // ============================================================
 
 const userTokens = new Map();
@@ -53,6 +55,8 @@ function loadTokens() {
             
             console.log(`[TryRating Bot] ✅ Loaded ${userTokens.size} tokens from file`);
             return true;
+        } else {
+            console.log('[TryRating Bot] 📄 No token file found, starting fresh');
         }
     } catch (e) {
         console.error('[TryRating Bot] Error loading tokens:', e);
@@ -89,12 +93,16 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('[TryRating Bot] 🤖 Bot started!');
 
-// Auto-save every 30 seconds
-setInterval(saveTokens, 30000);
+// Save tokens every 10 seconds (more frequent)
+const saveInterval = setInterval(() => {
+    if (userTokens.size > 0 || pendingVerifications.size > 0) {
+        saveTokens();
+    }
+}, 10000);
 
 // Save on exit
-process.on('SIGINT', () => { saveTokens(); process.exit(0); });
-process.on('SIGTERM', () => { saveTokens(); process.exit(0); });
+process.on('SIGINT', () => { saveTokens(); clearInterval(saveInterval); process.exit(0); });
+process.on('SIGTERM', () => { saveTokens(); clearInterval(saveInterval); process.exit(0); });
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -158,7 +166,7 @@ Or send /help for more info.`;
 
 bot.onText(/\/sub/, async (msg) => {
     const chatId = msg.chat.id;
-    const userId = String(msg.from.id); // ✅ Consistent string key
+    const userId = String(msg.from.id);
     const username = msg.from.username || msg.from.first_name || 'User';
     
     try {
@@ -166,7 +174,6 @@ bot.onText(/\/sub/, async (msg) => {
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
             
-            // ✅ Always return the SAME token - no "already verified" messages
             bot.sendMessage(
                 chatId,
                 `🔑 *Your token is:*
@@ -182,7 +189,7 @@ Enter this token in the extension to get started.`,
             return;
         }
         
-        // ✅ First time - generate and store token
+        // ✅ Generate new token
         const token = generateToken();
         
         userTokens.set(userId, {
@@ -196,6 +203,7 @@ Enter this token in the extension to get started.`,
             verifiedAt: null
         });
         
+        // ✅ IMMEDIATELY SAVE TO FILE
         saveTokens();
         
         bot.sendMessage(
@@ -211,7 +219,8 @@ Enter this token in the extension to get started.`,
             { parse_mode: 'Markdown' }
         );
         
-        console.log(`[TryRating Bot] 📝 New token for user ${userId} (${username})`);
+        console.log(`[TryRating Bot] 📝 New token for user ${userId}: ${token}`);
+        console.log(`[TryRating Bot] 📊 Total tokens: ${userTokens.size}`);
         
     } catch (error) {
         console.error('[TryRating Bot] Error:', error);
@@ -310,6 +319,8 @@ You don't have a token yet. Send /sub to generate one.`,
 
 async function requestVerificationCode(token) {
     try {
+        console.log(`[TryRating Bot] 🔍 Looking for token: ${token}`);
+        
         let userId = null;
         let tokenData = null;
         
@@ -322,10 +333,12 @@ async function requestVerificationCode(token) {
         }
         
         if (!userId || !tokenData) {
+            console.log(`[TryRating Bot] ❌ Token not found: ${token}`);
             return { success: false, error: 'Invalid token' };
         }
         
-        // ✅ If already active, just return success
+        console.log(`[TryRating Bot] ✅ Token found for user ${userId}`);
+        
         if (tokenData.isActive) {
             return { 
                 success: true, 
@@ -365,7 +378,7 @@ Enter this code in the TryRating Assistant extension to activate your token.
 }
 
 // ============================================================
-// API: VERIFY CODE - Always succeeds for valid token
+// API: VERIFY CODE
 // ============================================================
 
 async function verifyCode(token, code) {
@@ -385,7 +398,6 @@ async function verifyCode(token, code) {
             return { success: false, error: 'Invalid token' };
         }
         
-        // ✅ If already active, just return success (no error)
         if (tokenData.isActive) {
             return { 
                 success: true, 
@@ -542,8 +554,11 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// ✅ Debug endpoint - see what tokens are stored
+// ✅ Debug endpoint
 app.get('/api/debug-tokens', (req, res) => {
+    // Force reload from file first
+    loadTokens();
+    
     const tokens = [];
     for (const [id, data] of userTokens) {
         tokens.push({
@@ -565,6 +580,9 @@ app.get('/api/debug-tokens', (req, res) => {
 app.post('/api/request-code', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/request-code called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
+    
+    // Force reload from file
+    loadTokens();
     
     const { token } = req.body;
     
@@ -594,6 +612,9 @@ app.post('/api/request-code', async (req, res) => {
 app.post('/api/verify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/verify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
+    
+    // Force reload from file
+    loadTokens();
     
     const { token, code } = req.body;
     
@@ -629,6 +650,9 @@ app.post('/api/verify', async (req, res) => {
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
+    
+    // Force reload from file
+    loadTokens();
     
     const { authCode, title, description } = req.body;
     
