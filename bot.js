@@ -17,7 +17,6 @@ const BOT_TOKEN = '8854314913:AAFRG1nLNCDbpso8vJg_PnraKzgUn2qoNXk';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'tokens.json');
 
-// Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
     console.log('[TryRating Bot] 📁 Created data directory');
@@ -28,7 +27,6 @@ if (!fs.existsSync(DATA_DIR)) {
 // ============================================================
 
 const userTokens = new Map();
-const pendingVerifications = new Map();
 
 // ============================================================
 // LOAD TOKENS FROM FILE
@@ -39,17 +37,10 @@ function loadTokens() {
         if (fs.existsSync(DATA_FILE)) {
             const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             userTokens.clear();
-            pendingVerifications.clear();
             
             if (data.userTokens) {
                 for (const [key, value] of Object.entries(data.userTokens)) {
                     userTokens.set(key, value);
-                }
-            }
-            
-            if (data.pendingVerifications) {
-                for (const [key, value] of Object.entries(data.pendingVerifications)) {
-                    pendingVerifications.set(key, value);
                 }
             }
             
@@ -71,8 +62,7 @@ function loadTokens() {
 function saveTokens() {
     try {
         const data = {
-            userTokens: Object.fromEntries(userTokens),
-            pendingVerifications: Object.fromEntries(pendingVerifications)
+            userTokens: Object.fromEntries(userTokens)
         };
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
         console.log(`[TryRating Bot] 💾 Saved ${userTokens.size} tokens to file`);
@@ -93,9 +83,9 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('[TryRating Bot] 🤖 Bot started!');
 
-// Save tokens every 10 seconds (more frequent)
+// Save tokens every 10 seconds
 const saveInterval = setInterval(() => {
-    if (userTokens.size > 0 || pendingVerifications.size > 0) {
+    if (userTokens.size > 0) {
         saveTokens();
     }
 }, 10000);
@@ -114,10 +104,6 @@ function generateToken() {
         parts.push(crypto.randomBytes(4).toString('hex'));
     }
     return parts.join('-');
-}
-
-function generateVerificationCode() {
-    return Math.floor(1000 + Math.random() * 9000).toString();
 }
 
 // ============================================================
@@ -161,7 +147,7 @@ Or send /help for more info.`;
 });
 
 // ============================================================
-// COMMAND: /sub - ALWAYS returns the SAME token
+// COMMAND: /sub - Returns TOKEN ONLY (no code)
 // ============================================================
 
 bot.onText(/\/sub/, async (msg) => {
@@ -181,9 +167,9 @@ bot.onText(/\/sub/, async (msg) => {
 
 This token can be used on any Chrome profile.
 
-*Status:* ${existing.isActive ? '✅ Active' : '⏳ Pending Verification'}
+*Status:* ✅ Active
 
-Enter this token in the extension to get started.`,
+Enter this token in the extension to start receiving notifications.`,
                 { parse_mode: 'Markdown' }
             );
             return;
@@ -199,11 +185,11 @@ Enter this token in the extension to get started.`,
             token: token,
             authCode: token,
             createdAt: new Date().toISOString(),
-            isActive: false,
-            verifiedAt: null
+            isActive: true,  // ✅ Always active immediately
+            verifiedAt: new Date().toISOString()
         });
         
-        // ✅ IMMEDIATELY SAVE TO FILE
+        // ✅ Immediate save
         saveTokens();
         
         bot.sendMessage(
@@ -213,14 +199,13 @@ Enter this token in the extension to get started.`,
 
 This token can be used on any Chrome profile.
 
-*Status:* ⏳ Pending Verification
+*Status:* ✅ Active
 
-Enter this token in the extension to get started.`,
+Enter this token in the extension to start receiving notifications.`,
             { parse_mode: 'Markdown' }
         );
         
         console.log(`[TryRating Bot] 📝 New token for user ${userId}: ${token}`);
-        console.log(`[TryRating Bot] 📊 Total tokens: ${userTokens.size}`);
         
     } catch (error) {
         console.error('[TryRating Bot] Error:', error);
@@ -251,16 +236,15 @@ bot.onText(/\/help/, async (msg) => {
 1. Send /sub to get your token
 2. Copy the token
 3. Open TryRating Assistant extension
-4. Enter your token and click "Request Code"
-5. Check Telegram for verification code
-6. Enter the code and click "Verify"
-7. Start receiving notifications!
+4. Enter your token
+5. Start receiving notifications instantly!
 
 ---
 
 *Note:*
 - Each Telegram account gets ONE unique token (same token always)
 - Your token works on any Chrome profile
+- No verification code needed
 - Keep your token secure
 
 *Ready to start? Send /sub!*`;
@@ -289,21 +273,17 @@ You don't have a token yet. Send /sub to generate one.`,
         }
         
         const tokenData = userTokens.get(userId);
-        const status = tokenData.isActive ? '✅ Active' : '⏳ Pending Verification';
         
         let message = `
 📊 *Token Status*
 
 🔑 Token: \`${tokenData.token}\`
-📋 Status: ${status}
+📋 Status: ✅ Active
 👤 User: ${tokenData.username || 'Unknown'}
-📅 Created: ${new Date(tokenData.createdAt).toLocaleString()}`;
+📅 Created: ${new Date(tokenData.createdAt).toLocaleString()}
+✅ Verified: ${new Date(tokenData.verifiedAt).toLocaleString()}
 
-        if (tokenData.verifiedAt) {
-            message += `\n✅ Verified: ${new Date(tokenData.verifiedAt).toLocaleString()}`;
-        }
-
-        message += `\n\n${tokenData.isActive ? '✅ Your token is active and can be used on any Chrome profile!' : '⏳ Please verify your token in the extension.'}`;
+Your token is active and can be used on any Chrome profile!`;
 
         bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
         
@@ -314,10 +294,10 @@ You don't have a token yet. Send /sub to generate one.`,
 });
 
 // ============================================================
-// API: REQUEST VERIFICATION CODE
+// API: GET TOKEN STATUS - Simple token check
 // ============================================================
 
-async function requestVerificationCode(token) {
+async function getTokenStatus(token) {
     try {
         console.log(`[TryRating Bot] 🔍 Looking for token: ${token}`);
         
@@ -339,118 +319,16 @@ async function requestVerificationCode(token) {
         
         console.log(`[TryRating Bot] ✅ Token found for user ${userId}`);
         
-        if (tokenData.isActive) {
-            return { 
-                success: true, 
-                message: 'Token is active and ready to use.',
-                alreadyActive: true 
-            };
-        }
-        
-        const verificationCode = generateVerificationCode();
-        
-        pendingVerifications.set(userId, {
-            code: verificationCode,
-            token: token,
-            expiresAt: Date.now() + 10 * 60 * 1000
-        });
-        
-        saveTokens();
-        
-        await bot.sendMessage(
-            tokenData.chatId,
-            `🔢 *Your verification code is:* \`${verificationCode}\`
-
-Enter this code in the TryRating Assistant extension to activate your token.
-
-⏰ This code expires in 10 minutes.
-
-*Token:* \`${token}\``,
-            { parse_mode: 'Markdown' }
-        );
-        
-        return { success: true, message: 'Verification code sent to Telegram' };
+        return { 
+            success: true, 
+            token: token, 
+            user: tokenData,
+            isActive: tokenData.isActive
+        };
         
     } catch (error) {
-        console.error('[TryRating Bot] Request code error:', error);
+        console.error('[TryRating Bot] Error:', error);
         return { success: false, error: error.message };
-    }
-}
-
-// ============================================================
-// API: VERIFY CODE
-// ============================================================
-
-async function verifyCode(token, code) {
-    try {
-        let userId = null;
-        let tokenData = null;
-        
-        for (const [id, data] of userTokens) {
-            if (data.token === token) {
-                userId = id;
-                tokenData = data;
-                break;
-            }
-        }
-        
-        if (!userId || !tokenData) {
-            return { success: false, error: 'Invalid token' };
-        }
-        
-        if (tokenData.isActive) {
-            return { 
-                success: true, 
-                token: token, 
-                user: tokenData, 
-                authCode: token,
-                alreadyActive: true 
-            };
-        }
-        
-        const pending = pendingVerifications.get(userId);
-        if (!pending) {
-            return { success: false, error: 'No verification code requested' };
-        }
-        
-        if (pending.token !== token) {
-            return { success: false, error: 'Token mismatch' };
-        }
-        
-        if (pending.code !== code) {
-            return { success: false, error: 'Invalid verification code' };
-        }
-        
-        if (Date.now() > pending.expiresAt) {
-            return { success: false, error: 'Verification code expired. Request a new one.' };
-        }
-        
-        tokenData.isActive = true;
-        tokenData.verifiedAt = new Date().toISOString();
-        tokenData.authCode = token;
-        pendingVerifications.delete(userId);
-        
-        saveTokens();
-        
-        bot.sendMessage(
-            tokenData.chatId,
-            `✅ *Token Verified Successfully!*
-
-Your TryRating Assistant token is now active.
-
-🔑 Token: \`${token}\`
-
-You can now use this token on any Chrome profile!
-
-*Happy rating! 🎯*`,
-            { parse_mode: 'Markdown' }
-        );
-        
-        return { success: true, token: token, user: tokenData, authCode: token };
-        
-    } catch (error) {
-        console.error('[TryRating Bot] Verification error:', error);
-        return { success: false, error: 'Verification failed' };
     }
 }
 
@@ -524,7 +402,6 @@ app.get('/', (req, res) => {
             health: '/health',
             status: '/api/status',
             debug: '/api/debug-tokens',
-            requestCode: '/api/request-code (POST)',
             verify: '/api/verify (POST)',
             notify: '/api/notify (POST)'
         },
@@ -541,7 +418,6 @@ app.get('/health', (req, res) => {
         status: 'ok', 
         bot: 'TryRating Assistant Bot',
         activeTokens: userTokens.size,
-        pendingVerifications: pendingVerifications.size,
         timestamp: new Date().toISOString()
     });
 });
@@ -549,14 +425,12 @@ app.get('/health', (req, res) => {
 app.get('/api/status', (req, res) => {
     res.json({ 
         status: 'ok', 
-        activeTokens: userTokens.size,
-        pendingVerifications: pendingVerifications.size
+        activeTokens: userTokens.size
     });
 });
 
 // ✅ Debug endpoint
 app.get('/api/debug-tokens', (req, res) => {
-    // Force reload from file first
     loadTokens();
     
     const tokens = [];
@@ -577,11 +451,11 @@ app.get('/api/debug-tokens', (req, res) => {
     });
 });
 
-app.post('/api/request-code', async (req, res) => {
-    console.log('[TryRating Bot] 📥 /api/request-code called');
+// ✅ SIMPLE VERIFY - Just checks if token exists (NO CODE)
+app.post('/api/verify', async (req, res) => {
+    console.log('[TryRating Bot] 📥 /api/verify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
     
-    // Force reload from file
     loadTokens();
     
     const { token } = req.body;
@@ -593,46 +467,14 @@ app.post('/api/request-code', async (req, res) => {
         });
     }
     
-    const result = await requestVerificationCode(token);
-    
-    if (result.success) {
-        res.json({ 
-            success: true, 
-            message: result.message,
-            alreadyActive: result.alreadyActive || false
-        });
-    } else {
-        res.status(400).json({
-            success: false,
-            error: result.error
-        });
-    }
-});
-
-app.post('/api/verify', async (req, res) => {
-    console.log('[TryRating Bot] 📥 /api/verify called');
-    console.log('[TryRating Bot] 📦 Request body:', req.body);
-    
-    // Force reload from file
-    loadTokens();
-    
-    const { token, code } = req.body;
-    
-    if (!token || !code) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Token and code required' 
-        });
-    }
-    
-    const result = await verifyCode(token, code);
+    const result = await getTokenStatus(token);
     
     if (result.success) {
         res.json({
             success: true,
             token: result.token,
-            authCode: result.authCode,
-            alreadyActive: result.alreadyActive || false,
+            authCode: result.token,
+            alreadyActive: true,
             user: {
                 userId: result.user.userId,
                 chatId: result.user.chatId,
@@ -647,11 +489,11 @@ app.post('/api/verify', async (req, res) => {
     }
 });
 
+// POST /api/notify
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
     
-    // Force reload from file
     loadTokens();
     
     const { authCode, title, description } = req.body;
