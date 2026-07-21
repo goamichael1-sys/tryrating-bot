@@ -12,8 +12,8 @@ const BOT_TOKEN = '8854314913:AAFRG1nLNCDbpso8vJg_PnraKzgUn2qoNXk';
 // STORAGE
 // ============================================================
 
-const userTokens = new Map();
-const pendingVerifications = new Map();
+const userTokens = new Map(); // userId -> { token, chatId, username, createdAt, isActive, verifiedAt }
+const pendingVerifications = new Map(); // userId -> { code, token, expiresAt }
 
 // ============================================================
 // INITIALIZE BOT
@@ -80,7 +80,7 @@ Or send /help for more info.`;
 });
 
 // ============================================================
-// COMMAND: /sub - Get token ONLY (no code)
+// COMMAND: /sub - ALWAYS returns the SAME token
 // ============================================================
 
 bot.onText(/\/sub/, async (msg) => {
@@ -90,36 +90,27 @@ bot.onText(/\/sub/, async (msg) => {
     const firstName = msg.from.first_name || 'User';
     
     try {
+        // ✅ Check if user already has a token
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
             
-            if (existing.isActive) {
-                bot.sendMessage(
-                    chatId,
-                    `🔑 *Your token is:*
+            // ✅ Always return the SAME token - no "already verified" message
+            bot.sendMessage(
+                chatId,
+                `🔑 *Your token is:*
 \`${existing.token}\`
 
 This token can be used on any Chrome profile.
 
-*Already verified!* ✅`,
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            } else {
-                bot.sendMessage(
-                    chatId,
-                    `🔑 *Your token is:*
-\`${existing.token}\`
+*Status:* ${existing.isActive ? '✅ Active' : '⏳ Pending Verification'}
 
-Please enable Telegram Notifications in TryRating Assistant extension and enter this token.
-
-*Status:* ⏳ Pending verification`,
-                    { parse_mode: 'Markdown' }
-                );
-                return;
-            }
+*Next step:* Enter this token in the extension, and we'll send a verification code to your Telegram.`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
         }
         
+        // ✅ First time user - generate new token
         const token = generateToken();
         
         userTokens.set(userId, {
@@ -139,9 +130,9 @@ Please enable Telegram Notifications in TryRating Assistant extension and enter 
             `🔑 *Your token is:*
 \`${token}\`
 
-Please enable Telegram Notifications in TryRating Assistant extension and enter this token.
+This token can be used on any Chrome profile.
 
-*Status:* ⏳ Pending verification
+*Status:* ⏳ Pending Verification
 
 *Next step:* Enter this token in the extension, and we'll send a verification code to your Telegram.`,
             { parse_mode: 'Markdown' }
@@ -186,7 +177,7 @@ bot.onText(/\/help/, async (msg) => {
 ---
 
 *Note:*
-- Each Telegram account gets one unique token
+- Each Telegram account gets one unique token (same token always)
 - Your token works on any Chrome profile
 - Keep your token secure
 
@@ -261,10 +252,16 @@ async function requestVerificationCode(token) {
             return { success: false, error: 'Invalid token' };
         }
         
+        // ✅ If already active, just return success - NO ERROR
         if (tokenData.isActive) {
-            return { success: false, error: 'Token already verified' };
+            return { 
+                success: true, 
+                message: 'Token already active. You can use it on any profile.',
+                alreadyActive: true 
+            };
         }
         
+        // Generate new verification code
         const verificationCode = generateVerificationCode();
         
         pendingVerifications.set(userId, {
@@ -294,7 +291,7 @@ Enter this code in the TryRating Assistant extension to activate your token.
 }
 
 // ============================================================
-// API: VERIFY CODE - Allows re-verification across profiles
+// API: VERIFY CODE - Always returns success for valid token
 // ============================================================
 
 async function verifyCode(token, code) {
@@ -314,26 +311,14 @@ async function verifyCode(token, code) {
             return { success: false, error: 'Invalid token' };
         }
         
-        // ✅ Allow re-verification for already active tokens (cross-profile support)
+        // ✅ If already active, return success (NO ERROR)
         if (tokenData.isActive) {
-            bot.sendMessage(
-                tokenData.chatId,
-                `✅ *Token is already active!*
-
-🔑 Token: \`${token}\`
-
-This token can be used on any Chrome profile.
-
-*Already verified!* 🎯`,
-                { parse_mode: 'Markdown' }
-            );
-            
             return { 
                 success: true, 
                 token: token, 
                 user: tokenData, 
                 authCode: token,
-                alreadyVerified: true 
+                alreadyActive: true 
             };
         }
         
@@ -383,7 +368,7 @@ You can now use this token on any Chrome profile!
 }
 
 // ============================================================
-// API: SEND NOTIFICATION - NO LINK
+// API: SEND NOTIFICATION
 // ============================================================
 
 async function sendNotification(authCode, title, description) {
@@ -409,7 +394,6 @@ async function sendNotification(authCode, title, description) {
             return { success: false, error: 'Token not active' };
         }
         
-        // Clean message - NO LINK
         const message = `
 🎯 *New TryRating Tasks Available!*
 
@@ -503,7 +487,11 @@ app.post('/api/request-code', async (req, res) => {
     const result = await requestVerificationCode(token);
     
     if (result.success) {
-        res.json({ success: true, message: result.message });
+        res.json({ 
+            success: true, 
+            message: result.message,
+            alreadyActive: result.alreadyActive || false
+        });
     } else {
         res.status(400).json({
             success: false,
@@ -533,7 +521,7 @@ app.post('/api/verify', async (req, res) => {
             success: true,
             token: result.token,
             authCode: result.authCode,
-            alreadyVerified: result.alreadyVerified || false,
+            alreadyActive: result.alreadyActive || false,
             user: {
                 userId: result.user.userId,
                 chatId: result.user.chatId,
