@@ -17,13 +17,12 @@ const BOT_TOKEN = '8854314913:AAFRG1nLNCDbpso8vJg_PnraKzgUn2qoNXk';
 const DATA_DIR = path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'tokens.json');
 
-// Ensure data directory exists
 if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
 // ============================================================
-// STORAGE
+// STORAGE - Using userId as key
 // ============================================================
 
 const userTokens = new Map();
@@ -37,7 +36,6 @@ function loadTokens() {
     try {
         if (fs.existsSync(DATA_FILE)) {
             const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-            
             userTokens.clear();
             pendingVerifications.clear();
             
@@ -85,28 +83,18 @@ function saveTokens() {
 // INITIALIZE BOT
 // ============================================================
 
-// Load tokens before starting
 loadTokens();
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('[TryRating Bot] 🤖 Bot started!');
 
-// Save tokens every 30 seconds
+// Auto-save every 30 seconds
 setInterval(saveTokens, 30000);
 
-// Save tokens on process exit
-process.on('SIGINT', () => {
-    console.log('[TryRating Bot] Saving tokens before exit...');
-    saveTokens();
-    process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-    console.log('[TryRating Bot] Saving tokens before exit...');
-    saveTokens();
-    process.exit(0);
-});
+// Save on exit
+process.on('SIGINT', () => { saveTokens(); process.exit(0); });
+process.on('SIGTERM', () => { saveTokens(); process.exit(0); });
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -165,20 +153,20 @@ Or send /help for more info.`;
 });
 
 // ============================================================
-// COMMAND: /sub - ALWAYS returns the SAME token per user
+// COMMAND: /sub - ALWAYS returns the SAME token
 // ============================================================
 
 bot.onText(/\/sub/, async (msg) => {
     const chatId = msg.chat.id;
-    const userId = msg.from.id.toString();
+    const userId = String(msg.from.id); // ✅ Consistent string key
     const username = msg.from.username || msg.from.first_name || 'User';
-    const firstName = msg.from.first_name || 'User';
     
     try {
         // ✅ Check if user already has a token
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
             
+            // ✅ Always return the SAME token - no "already verified" messages
             bot.sendMessage(
                 chatId,
                 `🔑 *Your token is:*
@@ -188,20 +176,19 @@ This token can be used on any Chrome profile.
 
 *Status:* ${existing.isActive ? '✅ Active' : '⏳ Pending Verification'}
 
-*Next step:* Enter this token in the extension, and we'll send a verification code to your Telegram.`,
+Enter this token in the extension to get started.`,
                 { parse_mode: 'Markdown' }
             );
             return;
         }
         
-        // ✅ First time user - generate new token
+        // ✅ First time - generate and store token
         const token = generateToken();
         
         userTokens.set(userId, {
             userId: userId,
             chatId: chatId,
             username: username,
-            firstName: firstName,
             token: token,
             authCode: token,
             createdAt: new Date().toISOString(),
@@ -220,7 +207,7 @@ This token can be used on any Chrome profile.
 
 *Status:* ⏳ Pending Verification
 
-*Next step:* Enter this token in the extension, and we'll send a verification code to your Telegram.`,
+Enter this token in the extension to get started.`,
             { parse_mode: 'Markdown' }
         );
         
@@ -263,7 +250,7 @@ bot.onText(/\/help/, async (msg) => {
 ---
 
 *Note:*
-- Each Telegram account gets one unique token (same token always)
+- Each Telegram account gets ONE unique token (same token always)
 - Your token works on any Chrome profile
 - Keep your token secure
 
@@ -278,7 +265,7 @@ bot.onText(/\/help/, async (msg) => {
 
 bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id;
-    const userId = msg.from.id.toString();
+    const userId = String(msg.from.id);
     
     try {
         if (!userTokens.has(userId)) {
@@ -338,10 +325,11 @@ async function requestVerificationCode(token) {
             return { success: false, error: 'Invalid token' };
         }
         
+        // ✅ If already active, just return success
         if (tokenData.isActive) {
             return { 
                 success: true, 
-                message: 'Token already active. You can use it on any profile.',
+                message: 'Token is active and ready to use.',
                 alreadyActive: true 
             };
         }
@@ -377,7 +365,7 @@ Enter this code in the TryRating Assistant extension to activate your token.
 }
 
 // ============================================================
-// API: VERIFY CODE
+// API: VERIFY CODE - Always succeeds for valid token
 // ============================================================
 
 async function verifyCode(token, code) {
@@ -397,6 +385,7 @@ async function verifyCode(token, code) {
             return { success: false, error: 'Invalid token' };
         }
         
+        // ✅ If already active, just return success (no error)
         if (tokenData.isActive) {
             return { 
                 success: true, 
@@ -508,14 +497,12 @@ _TryRating Assistant_`;
 const app = express();
 app.use(express.json());
 
-// Enable CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
     next();
 });
 
-// Root endpoint
 app.get('/', (req, res) => {
     res.json({
         name: 'TryRating Assistant Bot',
@@ -537,7 +524,6 @@ app.get('/', (req, res) => {
     });
 });
 
-// Health check
 app.get('/health', (req, res) => {
     res.json({ 
         status: 'ok', 
@@ -548,7 +534,6 @@ app.get('/health', (req, res) => {
     });
 });
 
-// GET /api/status
 app.get('/api/status', (req, res) => {
     res.json({ 
         status: 'ok', 
@@ -557,7 +542,7 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// GET /api/debug-tokens - See what tokens the bot knows
+// ✅ Debug endpoint - see what tokens are stored
 app.get('/api/debug-tokens', (req, res) => {
     const tokens = [];
     for (const [id, data] of userTokens) {
@@ -577,7 +562,6 @@ app.get('/api/debug-tokens', (req, res) => {
     });
 });
 
-// POST /api/request-code
 app.post('/api/request-code', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/request-code called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
@@ -607,7 +591,6 @@ app.post('/api/request-code', async (req, res) => {
     }
 });
 
-// POST /api/verify
 app.post('/api/verify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/verify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
@@ -643,7 +626,6 @@ app.post('/api/verify', async (req, res) => {
     }
 });
 
-// POST /api/notify
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
@@ -676,12 +658,8 @@ app.post('/api/notify', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[TryRating Bot] 🌐 API server running on port ${PORT}`);
-    console.log(`[TryRating Bot] 📍 Root: https://your-domain.com/`);
     console.log(`[TryRating Bot] 📍 Health: https://your-domain.com/health`);
     console.log(`[TryRating Bot] 📍 Debug: https://your-domain.com/api/debug-tokens`);
-    console.log(`[TryRating Bot] 📍 Request Code: https://your-domain.com/api/request-code`);
-    console.log(`[TryRating Bot] 📍 Verify: https://your-domain.com/api/verify`);
-    console.log(`[TryRating Bot] 📍 Notify: https://your-domain.com/api/notify`);
 });
 
 console.log('[TryRating Bot] ==================================');
