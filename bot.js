@@ -27,11 +27,12 @@ if (!fs.existsSync(DATA_DIR)) {
 // ============================================================
 
 const userTokens = new Map();
-let memoryBackup = {};  // In-memory backup
+let memoryBackup = {};
+const processingSub = new Map(); // ✅ Track users currently processing /sub
+const SUB_COOLDOWN = 5000; // ✅ 5 seconds cooldown
 
 function loadTokens() {
     try {
-        // Try main file
         if (fs.existsSync(DATA_FILE)) {
             const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
             userTokens.clear();
@@ -45,7 +46,6 @@ function loadTokens() {
             return true;
         }
         
-        // Try backup
         const backupFile = DATA_FILE + '.backup';
         if (fs.existsSync(backupFile)) {
             const data = JSON.parse(fs.readFileSync(backupFile, 'utf8'));
@@ -56,7 +56,6 @@ function loadTokens() {
                 }
             }
             memoryBackup = Object.fromEntries(userTokens);
-            // Restore main file from backup
             fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
             console.log(`[TryRating Bot] ✅ Loaded ${userTokens.size} tokens from backup, restored main file`);
             return true;
@@ -66,7 +65,6 @@ function loadTokens() {
         return false;
     } catch (e) {
         console.error('[TryRating Bot] Error loading tokens:', e);
-        // Try to restore from memory backup if available
         if (Object.keys(memoryBackup).length > 0) {
             userTokens.clear();
             for (const [key, value] of Object.entries(memoryBackup)) {
@@ -88,45 +86,35 @@ function saveTokens() {
             totalTokens: userTokens.size
         };
         
-        // Save to main file
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-        
-        // Save to backup
         const backupFile = DATA_FILE + '.backup';
         fs.writeFileSync(backupFile, JSON.stringify(data, null, 2));
-        
-        // Save to memory backup
         memoryBackup = Object.fromEntries(userTokens);
         
         console.log(`[TryRating Bot] 💾 Saved ${userTokens.size} tokens to file + backup`);
         return true;
     } catch (e) {
         console.error('[TryRating Bot] Error saving tokens:', e);
-        // Keep memory backup safe
         memoryBackup = Object.fromEntries(userTokens);
         return false;
     }
 }
 
-// Save on every change
 function updateUserToken(userId, data) {
     userTokens.set(userId, data);
-    saveTokens();  // Immediate save!
+    saveTokens();
 }
 
 function deleteUserToken(userId) {
     userTokens.delete(userId);
-    saveTokens();  // Immediate save!
+    saveTokens();
 }
 
-// Load on startup
 loadTokens();
 
-// Save on exit (extra safety)
 process.on('SIGINT', () => { saveTokens(); process.exit(0); });
 process.on('SIGTERM', () => { saveTokens(); process.exit(0); });
 
-// Also save every 30 seconds as fallback
 setInterval(() => {
     if (userTokens.size > 0) {
         saveTokens();
@@ -191,7 +179,7 @@ Get notifications when tasks become available on TryRating.
 });
 
 // ============================================================
-// COMMAND: /sub - Returns UNIQUE token (PERSISTED)
+// COMMAND: /sub - With cooldown to prevent duplicates
 // ============================================================
 
 bot.onText(/\/sub/, async (msg) => {
@@ -199,8 +187,34 @@ bot.onText(/\/sub/, async (msg) => {
     const userId = String(msg.from.id);
     const username = msg.from.username || msg.from.first_name || 'User';
     
+    // ✅ Check cooldown - prevent duplicate processing
+    const lastRequest = processingSub.get(userId);
+    const now = Date.now();
+    
+    if (lastRequest && (now - lastRequest) < SUB_COOLDOWN) {
+        console.log(`[TryRating Bot] ⏳ Cooldown active for user ${userId}, skipping duplicate`);
+        // Still send the token if it exists
+        if (userTokens.has(userId)) {
+            const existing = userTokens.get(userId);
+            bot.sendMessage(
+                chatId,
+                `🔑 *Your token is:*
+\`${existing.token}\`
+
+This token is permanent and can be used on any Chrome profile.
+
+*Status:* ✅ Active`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        return;
+    }
+    
+    // ✅ Set processing flag
+    processingSub.set(userId, now);
+    
     try {
-        // Check if user already has a token
+        // ✅ Check if user already has a token
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
             
@@ -216,13 +230,14 @@ This token is permanent and can be used on any Chrome profile.
 Enter this token in the extension to start receiving notifications.`,
                 { parse_mode: 'Markdown' }
             );
+            
+            setTimeout(() => processingSub.delete(userId), SUB_COOLDOWN);
             return;
         }
         
-        // Generate NEW unique token for this user
+        // ✅ Generate NEW unique token for this user
         const token = generateToken();
         
-        // Save to storage (persistent!)
         userTokens.set(userId, {
             userId: userId,
             chatId: chatId,
@@ -234,7 +249,6 @@ Enter this token in the extension to start receiving notifications.`,
             verifiedAt: new Date().toISOString()
         });
         
-        // Immediate save
         saveTokens();
         
         bot.sendMessage(
@@ -246,17 +260,18 @@ This token is permanent and can be used on any Chrome profile.
 
 *Status:* ✅ Active
 
-Enter this token in the extension to start receiving notifications.
-
 *Important:* This token is unique to you. Keep it secure!`,
             { parse_mode: 'Markdown' }
         );
         
         console.log(`[TryRating Bot] 📝 New token for user ${userId}: ${token}`);
         
+        setTimeout(() => processingSub.delete(userId), SUB_COOLDOWN);
+        
     } catch (error) {
         console.error('[TryRating Bot] Error:', error);
         bot.sendMessage(chatId, '❌ Sorry, there was an error. Please try again.');
+        processingSub.delete(userId);
     }
 });
 
@@ -474,7 +489,6 @@ app.get('/api/status', (req, res) => {
     });
 });
 
-// ✅ SIMPLE VERIFY - Just checks if token exists
 app.post('/api/verify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/verify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
@@ -512,7 +526,6 @@ app.post('/api/verify', async (req, res) => {
     }
 });
 
-// POST /api/notify
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
     console.log('[TryRating Bot] 📦 Request body:', req.body);
