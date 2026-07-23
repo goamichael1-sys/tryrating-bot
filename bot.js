@@ -5,10 +5,16 @@ const fs = require('fs');
 const path = require('path');
 
 // ============================================================
-// YOUR BOT TOKEN - MOVE TO ENVIRONMENT VARIABLE
+// BOT TOKEN - From Environment Variable
 // ============================================================
 
-const BOT_TOKEN = process.env.BOT_TOKEN || '8854314913:AAFRG1nLNCDbpso8vJg_PnraKzgUn2qoNXk';
+const BOT_TOKEN = process.env.BOT_TOKEN;
+
+if (!BOT_TOKEN) {
+    console.error('[TryRating Bot] ❌ BOT_TOKEN environment variable is required!');
+    console.error('[TryRating Bot] 📋 Please set BOT_TOKEN in Render environment variables.');
+    process.exit(1);
+}
 
 // ============================================================
 // PERSISTENT STORAGE
@@ -23,13 +29,13 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 // ============================================================
-// STORAGE - WITH MEMORY BACKUP
+// TOKEN STORAGE
 // ============================================================
 
 const userTokens = new Map();
 let memoryBackup = {};
-const processingSub = new Map(); // ✅ Track users currently processing /sub
-const SUB_COOLDOWN = 5000; // ✅ 5 seconds cooldown
+const processingSub = new Map();
+const SUB_COOLDOWN = 5000;
 
 function loadTokens() {
     try {
@@ -57,7 +63,7 @@ function loadTokens() {
             }
             memoryBackup = Object.fromEntries(userTokens);
             fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-            console.log(`[TryRating Bot] ✅ Loaded ${userTokens.size} tokens from backup, restored main file`);
+            console.log(`[TryRating Bot] ✅ Loaded ${userTokens.size} tokens from backup`);
             return true;
         }
         
@@ -71,7 +77,7 @@ function loadTokens() {
                 userTokens.set(key, value);
             }
             saveTokens();
-            console.log(`[TryRating Bot] 🔄 Restored ${userTokens.size} tokens from memory backup`);
+            console.log(`[TryRating Bot] 🔄 Restored ${userTokens.size} tokens from memory`);
             return true;
         }
         return false;
@@ -87,27 +93,16 @@ function saveTokens() {
         };
         
         fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-        const backupFile = DATA_FILE + '.backup';
-        fs.writeFileSync(backupFile, JSON.stringify(data, null, 2));
+        fs.writeFileSync(DATA_FILE + '.backup', JSON.stringify(data, null, 2));
         memoryBackup = Object.fromEntries(userTokens);
         
-        console.log(`[TryRating Bot] 💾 Saved ${userTokens.size} tokens to file + backup`);
+        console.log(`[TryRating Bot] 💾 Saved ${userTokens.size} tokens`);
         return true;
     } catch (e) {
         console.error('[TryRating Bot] Error saving tokens:', e);
         memoryBackup = Object.fromEntries(userTokens);
         return false;
     }
-}
-
-function updateUserToken(userId, data) {
-    userTokens.set(userId, data);
-    saveTokens();
-}
-
-function deleteUserToken(userId) {
-    userTokens.delete(userId);
-    saveTokens();
 }
 
 loadTokens();
@@ -128,9 +123,10 @@ setInterval(() => {
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 console.log('[TryRating Bot] 🤖 Bot started!');
+console.log('[TryRating Bot] 📋 Bot Token:', BOT_TOKEN.substring(0, 10) + '...');
 
 // ============================================================
-// HELPER FUNCTIONS
+// GENERATE TOKEN
 // ============================================================
 
 function generateToken() {
@@ -147,21 +143,31 @@ function generateToken() {
 
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
+    const firstName = msg.from.first_name || 'User';
     
     const welcomeMessage = `
-🎯 *TryRating Assistant*
+🎯 *Welcome ${firstName}!*
 
-Get notifications when tasks become available on TryRating.
+I'm the *TryRating Assistant Bot* 🔔
+
+I'll send you notifications when new tasks become available on TryRating.
 
 ---
 
 *How to get started:*
 
-1. Send /sub to get your unique token
-2. Enter the token in the TryRating Assistant extension
-3. Start receiving notifications!
+1️⃣ Send /sub to get your unique token
+2️⃣ Copy the token
+3️⃣ Open the TryRating Chrome Extension
+4️⃣ Enter your token in settings
+5️⃣ Start receiving notifications!
 
 ---
+
+*Commands:*
+/sub - Get your token
+/status - Check your token
+/help - Show this message
 
 *Need help?* Send /help`;
 
@@ -169,8 +175,8 @@ Get notifications when tasks become available on TryRating.
         parse_mode: 'Markdown',
         reply_markup: {
             keyboard: [
-                ['/sub', '/help'],
-                ['/status']
+                ['/sub', '/status'],
+                ['/help']
             ],
             resize_keyboard: true,
             one_time_keyboard: false
@@ -179,7 +185,7 @@ Get notifications when tasks become available on TryRating.
 });
 
 // ============================================================
-// COMMAND: /sub - With cooldown to prevent duplicates
+// COMMAND: /sub
 // ============================================================
 
 bot.onText(/\/sub/, async (msg) => {
@@ -187,55 +193,36 @@ bot.onText(/\/sub/, async (msg) => {
     const userId = String(msg.from.id);
     const username = msg.from.username || msg.from.first_name || 'User';
     
-    // ✅ Check cooldown - prevent duplicate processing
     const lastRequest = processingSub.get(userId);
     const now = Date.now();
     
     if (lastRequest && (now - lastRequest) < SUB_COOLDOWN) {
-        console.log(`[TryRating Bot] ⏳ Cooldown active for user ${userId}, skipping duplicate`);
-        // Still send the token if it exists
+        console.log(`[TryRating Bot] ⏳ Cooldown for user ${userId}`);
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
             bot.sendMessage(
                 chatId,
-                `🔑 *Your token is:*
-\`${existing.token}\`
-
-This token is permanent and can be used on any Chrome profile.
-
-*Status:* ✅ Active`,
+                `🔑 *Your token is:*\n\`${existing.token}\`\n\n✅ Active\n\nEnter this in the Chrome extension.`,
                 { parse_mode: 'Markdown' }
             );
         }
         return;
     }
     
-    // ✅ Set processing flag
     processingSub.set(userId, now);
     
     try {
-        // ✅ Check if user already has a token
         if (userTokens.has(userId)) {
             const existing = userTokens.get(userId);
-            
             bot.sendMessage(
                 chatId,
-                `🔑 *Your token is:*
-\`${existing.token}\`
-
-This token is permanent and can be used on any Chrome profile.
-
-*Status:* ✅ Active
-
-Enter this token in the extension to start receiving notifications.`,
+                `🔑 *Your token is:*\n\`${existing.token}\`\n\n✅ Active\n\nEnter this in the Chrome extension.`,
                 { parse_mode: 'Markdown' }
             );
-            
             setTimeout(() => processingSub.delete(userId), SUB_COOLDOWN);
             return;
         }
         
-        // ✅ Generate NEW unique token for this user
         const token = generateToken();
         
         userTokens.set(userId, {
@@ -253,18 +240,11 @@ Enter this token in the extension to start receiving notifications.`,
         
         bot.sendMessage(
             chatId,
-            `🔑 *Your token is:*
-\`${token}\`
-
-This token is permanent and can be used on any Chrome profile.
-
-*Status:* ✅ Active
-
-*Important:* This token is unique to you. Keep it secure!`,
+            `🔑 *Your unique token is:*\n\`${token}\`\n\n✅ Active\n\n📋 *Next steps:*\n1. Copy this token\n2. Open TryRating Chrome Extension\n3. Paste token in settings\n4. Start receiving notifications!\n\n⚠️ Keep this token secure!`,
             { parse_mode: 'Markdown' }
         );
         
-        console.log(`[TryRating Bot] 📝 New token for user ${userId}: ${token}`);
+        console.log(`[TryRating Bot] 📝 New token for ${username} (${userId}): ${token}`);
         
         setTimeout(() => processingSub.delete(userId), SUB_COOLDOWN);
         
@@ -272,6 +252,44 @@ This token is permanent and can be used on any Chrome profile.
         console.error('[TryRating Bot] Error:', error);
         bot.sendMessage(chatId, '❌ Sorry, there was an error. Please try again.');
         processingSub.delete(userId);
+    }
+});
+
+// ============================================================
+// COMMAND: /status
+// ============================================================
+
+bot.onText(/\/status/, async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = String(msg.from.id);
+    
+    try {
+        if (!userTokens.has(userId)) {
+            bot.sendMessage(
+                chatId,
+                `❌ *No token found*\n\nSend /sub to generate your token.`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+        
+        const tokenData = userTokens.get(userId);
+        
+        const message = `
+📊 *Token Status*
+
+🔑 Token: \`${tokenData.token}\`
+📋 Status: ✅ Active
+👤 User: ${tokenData.username || 'Unknown'}
+📅 Created: ${new Date(tokenData.createdAt).toLocaleString()}
+
+Your token is active and ready to use!`;
+
+        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+        
+    } catch (error) {
+        console.error('[TryRating Bot] Error:', error);
+        bot.sendMessage(chatId, '❌ Sorry, there was an error.');
     }
 });
 
@@ -287,7 +305,7 @@ bot.onText(/\/help/, async (msg) => {
 
 *Commands:*
 
-/sub - Get your token
+/sub - Get your unique token
 /status - Check your token status
 /help - Show this help message
 
@@ -297,76 +315,36 @@ bot.onText(/\/help/, async (msg) => {
 
 1. Send /sub to get your token
 2. Copy the token
-3. Open TryRating Assistant extension
-4. Enter your token
-5. Start receiving notifications instantly!
+3. Open TryRating Chrome Extension
+4. Paste token in settings
+5. Receive notifications when tasks appear!
 
 ---
 
 *Note:*
-- Each Telegram account gets ONE unique token (same token always)
+- Each Telegram account gets ONE unique token
 - Your token works on any Chrome profile
 - Keep your token secure
+- Token never expires
 
-*Ready to start? Send /sub!*`;
+*Ready? Send /sub!*`;
 
     bot.sendMessage(chatId, helpMessage, { parse_mode: 'Markdown' });
 });
 
 // ============================================================
-// COMMAND: /status
-// ============================================================
-
-bot.onText(/\/status/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = String(msg.from.id);
-    
-    try {
-        if (!userTokens.has(userId)) {
-            bot.sendMessage(
-                chatId,
-                `❌ *No token found*
-
-You don't have a token yet. Send /sub to generate one.`,
-                { parse_mode: 'Markdown' }
-            );
-            return;
-        }
-        
-        const tokenData = userTokens.get(userId);
-        
-        let message = `
-📊 *Token Status*
-
-🔑 Token: \`${tokenData.token}\`
-📋 Status: ✅ Active
-👤 User: ${tokenData.username || 'Unknown'}
-📅 Created: ${new Date(tokenData.createdAt).toLocaleString()}
-✅ Verified: ${new Date(tokenData.verifiedAt).toLocaleString()}
-
-Your token is active and can be used on any Chrome profile!`;
-
-        bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
-        
-    } catch (error) {
-        console.error('[TryRating Bot] Error:', error);
-        bot.sendMessage(chatId, '❌ Sorry, there was an error.');
-    }
-});
-
-// ============================================================
-// API: GET TOKEN STATUS
+// API: VERIFY TOKEN
 // ============================================================
 
 async function getTokenStatus(token) {
     try {
-        console.log(`[TryRating Bot] 🔍 Looking for token: ${token}`);
+        console.log(`[TryRating Bot] 🔍 Verifying token: ${token}`);
         
         let userId = null;
         let tokenData = null;
         
         for (const [id, data] of userTokens) {
-            if (data.token === token) {
+            if (data.token === token || data.authCode === token) {
                 userId = id;
                 tokenData = data;
                 break;
@@ -378,12 +356,21 @@ async function getTokenStatus(token) {
             return { success: false, error: 'Invalid token' };
         }
         
-        console.log(`[TryRating Bot] ✅ Token found for user ${userId}`);
+        if (!tokenData.isActive) {
+            console.log(`[TryRating Bot] ❌ Token inactive: ${token}`);
+            return { success: false, error: 'Token is inactive' };
+        }
+        
+        console.log(`[TryRating Bot] ✅ Token verified for user ${userId}`);
         
         return { 
             success: true, 
             token: token, 
-            user: tokenData,
+            user: {
+                userId: tokenData.userId,
+                chatId: tokenData.chatId,
+                username: tokenData.username || 'User'
+            },
             isActive: tokenData.isActive
         };
         
@@ -421,11 +408,12 @@ async function sendNotification(authCode, title, description) {
         }
         
         const message = `
-🎯 *New TryRating Tasks Available!*
+🎯 *${title || 'New TryRating Task Available!'}*
 
 ${description || 'New tasks are now available on TryRating.'}
 
-_TryRating Assistant_`;
+---
+🤖 *TryRating Assistant*`;
 
         await bot.sendMessage(tokenData.chatId, message, {
             parse_mode: 'Markdown',
@@ -460,14 +448,18 @@ app.get('/', (req, res) => {
         status: 'running',
         version: '1.0.0',
         endpoints: {
-            health: '/health',
-            status: '/api/status',
-            verify: '/api/verify (POST)',
-            notify: '/api/notify (POST)'
+            health: 'GET /health',
+            status: 'GET /api/status',
+            verify: 'POST /api/verify',
+            notify: 'POST /api/notify'
         },
         telegram: {
             bot_name: 'TryRating Assistant Bot',
             commands: ['/start', '/sub', '/status', '/help']
+        },
+        stats: {
+            activeTokens: userTokens.size,
+            totalUsers: userTokens.size
         },
         timestamp: new Date().toISOString()
     });
@@ -485,13 +477,13 @@ app.get('/health', (req, res) => {
 app.get('/api/status', (req, res) => {
     res.json({ 
         status: 'ok', 
-        activeTokens: userTokens.size
+        activeTokens: userTokens.size,
+        totalUsers: userTokens.size
     });
 });
 
 app.post('/api/verify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/verify called');
-    console.log('[TryRating Bot] 📦 Request body:', req.body);
     
     loadTokens();
     
@@ -512,11 +504,7 @@ app.post('/api/verify', async (req, res) => {
             token: result.token,
             authCode: result.token,
             alreadyActive: true,
-            user: {
-                userId: result.user.userId,
-                chatId: result.user.chatId,
-                username: result.user.username
-            }
+            user: result.user
         });
     } else {
         res.status(400).json({
@@ -528,7 +516,6 @@ app.post('/api/verify', async (req, res) => {
 
 app.post('/api/notify', async (req, res) => {
     console.log('[TryRating Bot] 📥 /api/notify called');
-    console.log('[TryRating Bot] 📦 Request body:', req.body);
     
     loadTokens();
     
@@ -560,7 +547,7 @@ app.post('/api/notify', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`[TryRating Bot] 🌐 API server running on port ${PORT}`);
-    console.log(`[TryRating Bot] 📍 Health: https://your-domain.com/health`);
+    console.log(`[TryRating Bot] 📍 Health: http://localhost:${PORT}/health`);
 });
 
 console.log('[TryRating Bot] ==================================');
