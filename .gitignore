@@ -1,0 +1,28 @@
+# Node modules
+node_modules/
+
+# Data files (tokens are stored here)
+data/
+*.backup
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Replit specific
+.replit
+replit.nix
