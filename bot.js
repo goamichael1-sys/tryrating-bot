@@ -3,15 +3,31 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// Load .env locally (Render injects env vars directly, this is a no-op there
+// if dotenv isn't installed / no .env file exists)
+try {
+    require('dotenv').config();
+} catch (e) {
+    // dotenv not installed - fine on Render, where env vars are set directly
+}
+
 // ============================================================
 // BOT TOKEN
 // ============================================================
 
-const BOT_TOKEN = '8936546304:AAEvFN9gM2-IFWrfX1U0YquKDxDyylHv2wc';
-const WEBHOOK_URL = 'https://tryrating-bot-tcbr.onrender.com';
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://tryrating-bot-tcbr.onrender.com';
+
+if (!BOT_TOKEN) {
+    console.error('[TryRating Bot] ❌ BOT_TOKEN environment variable is not set!');
+    console.error('[TryRating Bot] ❌ Set it in Render → your service → Environment,');
+    console.error('[TryRating Bot] ❌ or in a local .env file (BOT_TOKEN=...) for local dev.');
+    process.exit(1);
+}
 
 console.log('[TryRating Bot] 🤖 Starting bot...');
 console.log('[TryRating Bot] 📋 Token:', BOT_TOKEN.substring(0, 15) + '...');
+console.log('[TryRating Bot] 🌐 Webhook target:', WEBHOOK_URL);
 
 // ============================================================
 // STORAGE
@@ -236,6 +252,26 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', activeTokens: userTokens.size });
 });
 
+app.get('/api/status', (req, res) => {
+    res.json({
+        status: 'running',
+        activeTokens: userTokens.size,
+        webhookTarget: `${WEBHOOK_URL}/webhook`
+    });
+});
+
+// ✅ Visit this in your browser to see, right now, which URL Telegram has
+// on file for THIS bot's webhook - the fastest way to catch drift/staleness.
+app.get('/api/debug/webhook-info', async (req, res) => {
+    try {
+        const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
+        const info = await response.json();
+        res.json(info);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/verify', async (req, res) => {
     const { token } = req.body;
     console.log(`[TryRating Bot] 🔍 Verifying: ${token}`);
@@ -297,6 +333,14 @@ app.post('/api/notify', async (req, res) => {
 async function setupWebhook() {
     try {
         const webhookUrl = `${WEBHOOK_URL}/webhook`;
+        
+        // ✅ Clear any previously-registered webhook for THIS token first.
+        // This doesn't affect other bots/tokens, but guarantees this bot's
+        // webhook always matches exactly what's in WEBHOOK_URL right now,
+        // instead of silently keeping a stale URL from a previous deploy.
+        const deleteUrl = `https://api.telegram.org/bot${BOT_TOKEN}/deleteWebhook`;
+        await fetch(deleteUrl, { method: 'POST' });
+        
         console.log(`[TryRating Bot] 🔗 Setting webhook: ${webhookUrl}`);
         
         const url = `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`;
@@ -312,6 +356,13 @@ async function setupWebhook() {
         } else {
             console.error('[TryRating Bot] ❌ Webhook error:', result.description);
         }
+        
+        // ✅ Log back the confirmed state so any drift is obvious in your
+        // Render logs on every single boot, not just when you go looking.
+        const infoResponse = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
+        const info = await infoResponse.json();
+        console.log('[TryRating Bot] 🔍 Confirmed webhook info:', JSON.stringify(info.result));
+        
         return result;
     } catch (error) {
         console.error('[TryRating Bot] ❌ Webhook error:', error.message);
